@@ -33,7 +33,7 @@ const S = {
   theme: localStorage.getItem('theme') || 'light',
   unsubs: [],
   authMode: 'signin', pendingHouseholdCode: null,
-  q: '', type: 'All', fKeep: false, fStock: false, fRebuy: false,
+  q: '', type: 'All', view: 'main', fKeep: false, fStock: false,
   sheet: null, detailId: null,
   purchases: [], purchasesLoaded: false,
   photoCache: {}, devPurch: {},
@@ -229,6 +229,7 @@ function renderCellar() {
     </div>
     <div class="c-tools">
       <input class="c-search" id="c-search" type="search" placeholder="Search producer, name or region" autocomplete="off" value="${esc(S.q)}">
+      <div class="seg" id="c-view"></div>
       <div class="chip-row" id="c-types"></div>
       <div class="chip-row" id="c-flt"></div>
     </div>
@@ -244,32 +245,47 @@ function bindCellar() {
     const b = e.target.closest('[data-type]'); if (!b) return;
     S.type = b.dataset.type; refreshCellar();
   });
+  q('c-view').addEventListener('click', e => {
+    const b = e.target.closest('[data-view]'); if (!b) return;
+    S.view = b.dataset.view; S.type = 'All'; refreshCellar();
+  });
   q('c-flt').addEventListener('click', e => {
     const b = e.target.closest('[data-flt]'); if (!b) return;
     toggleFilter(b.dataset.flt); refreshCellar();
   });
   q('c-list').addEventListener('click', e => {
     const b = e.target.closest('[data-act]');
-    if (b) { e.stopPropagation(); adjustQty(b.dataset.id, b.dataset.act === 'inc' ? 1 : -1); return; }
+    if (b) {
+      e.stopPropagation();
+      if (b.dataset.act === 'bought') { S.detailId = b.dataset.id; S.purchases = []; openPurchaseSheet(b.dataset.id); return; }
+      adjustQty(b.dataset.id, b.dataset.act === 'inc' ? 1 : -1);
+      return;
+    }
     const r = e.target.closest('.wine-row');
     if (r) openDetail(r.dataset.id);
   });
 }
 
 function toggleFilter(k) {
-  if (k === 'keep') { S.fKeep = !S.fKeep; if (S.fKeep) S.fRebuy = false; }
-  if (k === 'stock') { S.fStock = !S.fStock; if (S.fStock) S.fRebuy = false; }
-  if (k === 'rebuy') { S.fRebuy = !S.fRebuy; if (S.fRebuy) { S.fKeep = false; S.fStock = false; } }
+  if (k === 'keep') S.fKeep = !S.fKeep;
+  if (k === 'stock') S.fStock = !S.fStock;
+}
+
+function inView(w, view) {
+  if (view === 'wish') return !!w.want;
+  if (w.want) return false;
+    if (view === 'rebuy') return (w.qtyOnHand || 0) <= 0;
+  return true;
 }
 
 function filteredWines() {
   const t = S.q.trim().toLowerCase();
   return S.wines.filter(w => {
     const qty = w.qtyOnHand || 0;
+    if (!inView(w, S.view)) return false;
     if (S.type !== 'All' && w.type !== S.type) return false;
-    if (S.fKeep && !w.keeper) return false;
-    if (S.fStock && !(qty > 0)) return false;
-    if (S.fRebuy && !(w.keeper && qty <= 0)) return false;
+    if (S.view === 'main' && S.fKeep && !w.keeper) return false;
+    if (S.view === 'main' && S.fStock && !(qty > 0)) return false;
     if (t) {
       const hay = [w.producer, w.name, w.region, w.type].join(' ').toLowerCase();
       if (!hay.includes(t)) return false;
@@ -278,26 +294,43 @@ function filteredWines() {
   }).sort((a, b) => (a.producer || '').localeCompare(b.producer || '') || (a.name || '').localeCompare(b.name || ''));
 }
 
+function emptyHTML(view) {
+  const m = view === 'wish'
+    ? ['⭐', 'Wish list is empty', 'Tap + Add and switch on "Haven\'t bought it yet" to save something you want to try.']
+    : view === 'rebuy'
+      ? ['🔁', 'Nothing to rebuy', 'Keepers you have run out of show up here.']
+      : ['🍷', 'Nothing on the rack yet', 'Tap + Add to log your first bottle.'];
+  return `<div class="empty"><span class="empty-ico">${m[0]}</span><div class="empty-ttl">${m[1]}</div><div class="empty-txt">${m[2]}</div></div>`;
+}
+
 function refreshCellar() {
   if (S.screen !== 'cellar' || !q('c-list')) return;
-  const bottles = S.wines.reduce((n, w) => n + (w.qtyOnHand || 0), 0);
-  q('c-sub').textContent = `${S.wines.length} saved, ${bottles} on hand`;
+  const owned = S.wines.filter(w => !w.want);
+  const bottles = owned.reduce((n, w) => n + (w.qtyOnHand || 0), 0);
+  q('c-sub').textContent = `${owned.length} saved, ${bottles} on hand`;
 
-  const used = [...new Set(S.wines.map(w => w.type).filter(Boolean))];
+  const count = v => S.wines.filter(w => inView(w, v)).length;
+  q('c-view').innerHTML = [['main', 'My list'], ['wish', 'Wish list'], ['rebuy', 'Rebuy']]
+    .map(([k, l]) => `<button class="seg-btn ${S.view === k ? 'sel' : ''}" data-view="${k}">${l} <span class="seg-n">${count(k)}</span></button>`).join('');
+
+  const base = S.wines.filter(w => inView(w, S.view));
+  const used = [...new Set(base.map(w => w.type).filter(Boolean))];
   const ordered = S.types.filter(t => used.includes(t)).concat(used.filter(t => !S.types.includes(t)));
   if (S.type !== 'All' && !used.includes(S.type)) S.type = 'All';
   q('c-types').innerHTML = ['All', ...ordered].map(t => `<button class="cat-chip ${S.type === t ? 'sel' : ''}" data-type="${esc(t)}">${esc(t)}</button>`).join('');
-  q('c-flt').innerHTML = [['keep', 'Keepers', S.fKeep], ['stock', 'In stock', S.fStock], ['rebuy', 'Rebuy', S.fRebuy]]
-    .map(([k, l, s]) => `<button class="cat-chip ${s ? 'sel' : ''}" data-flt="${k}">${l}</button>`).join('');
+  q('c-flt').innerHTML = S.view === 'main'
+    ? [['keep', 'Keepers', S.fKeep], ['stock', 'In stock', S.fStock]].map(([k, l, s]) => `<button class="cat-chip ${s ? 'sel' : ''}" data-flt="${k}">${l}</button>`).join('')
+    : '';
 
   const list = filteredWines();
-  if (!S.wines.length) {
-    q('c-list').innerHTML = `<div class="empty"><span class="empty-ico">🍷</span><div class="empty-ttl">Nothing on the rack yet</div><div class="empty-txt">Tap + Add to log your first bottle.</div></div>`;
+  if (!base.length) {
+    q('c-list').innerHTML = emptyHTML(S.view);
   } else if (!list.length) {
     q('c-list').innerHTML = `<div class="empty"><span class="empty-ico">🔍</span><div class="empty-ttl">No matches</div><div class="empty-txt">Try a different search or clear a filter.</div></div>`;
   } else {
     q('c-list').innerHTML = `<div class="wine-list">${list.map(rowHTML).join('')}</div>`;
   }
+}
 }
 
 function rowHTML(w) {
@@ -412,16 +445,17 @@ function detailHTML() {
   </div>
   ${src ? `<img class="d-photo" id="d-photo" src="${src}" alt="Label photo">` : ''}
   ${meta ? `<div class="d-meta">${meta}</div>` : ''}
+  ${w.want ? `<div class="d-tags"><span class="tag-keep">Wish list</span></div>` : ''}
   ${tags ? `<div class="d-tags">${tags}</div>` : ''}
   ${w.notes ? `<div class="d-notes">${esc(w.notes)}</div>` : ''}
-  <div class="d-have">
+  ${w.want ? '' : `<div class="d-have">
     <div><div class="d-have-lbl">Have</div><div class="d-count">${qty}</div></div>
     <div class="d-step">
       <button id="d-dec" aria-label="One less" ${qty <= 0 ? 'disabled' : ''}>−</button>
       <button id="d-inc" aria-label="One more">+</button>
     </div>
-  </div>
-  <button class="btn-main" id="d-buy">Add purchase</button>
+  </div>`}
+  <button class="btn-main" id="d-buy">${w.want ? 'Bought it' : 'Add purchase'}</button>
   <div class="edr-divider">Purchase history</div>
   <div style="margin-top:6px">${hist}</div>`;
 }
@@ -538,11 +572,11 @@ function savePurchase(id) {
   } else {
     const batch = writeBatch(db);
     batch.set(doc(collection(db, wpath(id) + '/purchases')), { ...p, createdAt: serverTimestamp() });
-    batch.update(doc(db, wpath(id)), { qtyOnHand: increment(p.qty), lastStore: p.store, lastPrice, updatedAt: serverTimestamp() });
+    batch.update(doc(db, wpath(id)), { qtyOnHand: increment(p.qty), lastStore: p.store, lastPrice, want: false, updatedAt: serverTimestamp() });
     if (p.store) batch.set(doc(db, settingsPath()), { stores: arrayUnion(p.store) }, { merge: true });
     batch.commit().catch(bgFail('Saving the purchase'));
   }
-  w.qtyOnHand = (w.qtyOnHand || 0) + p.qty; w.lastStore = p.store; w.lastPrice = lastPrice;
+  w.qtyOnHand = (w.qtyOnHand || 0) + p.qty; w.lastStore = p.store; w.lastPrice = lastPrice; w.want = false; w.want = false;
   refreshCellar();
   openDetail(id);
 }
@@ -554,9 +588,9 @@ function openWineSheet(id) {
   _addingType = false;
   if (id) {
     const w = S.wines.find(x => x.id === id); if (!w) return;
-    _f = { id, producer: w.producer || '', name: w.name || '', type: w.type || S.types[0], region: w.region || '', keeper: !!w.keeper, rating: w.rating || 0, notes: w.notes || '', photo: null, thumb: w.thumbData || null, photoState: 'keep', hadPhoto: !!w.hasPhoto };
+    _f = { id, producer: w.producer || '', name: w.name || '', type: w.type || S.types[0], region: w.region || '', keeper: !!w.keeper, want: !!w.want, qty: w.qtyOnHand || 0, rating: w.rating || 0, notes: w.notes || '', photo: null, thumb: w.thumbData || null, photoState: 'keep', hadPhoto: !!w.hasPhoto };
   } else {
-    _f = { id: null, producer: '', name: '', type: S.type !== 'All' ? S.type : S.types[0], region: '', keeper: false, rating: 0, notes: '', photo: null, thumb: null, photoState: 'none', hadPhoto: false };
+    _f = { id: null, producer: '', name: '', type: S.type !== 'All' ? S.type : S.types[0], region: '', keeper: false, want: S.view === 'wish', qty: 0, rating: 0, notes: '', photo: null, thumb: null, photoState: 'none', hadPhoto: false };
   }
   openSheet('wine', wineSheetHTML(), bindWineSheet);
 }
@@ -566,6 +600,7 @@ function wineSheetHTML() {
   return `
   <div class="sheet-handle"></div>
   <div class="sheet-hdr-row"><div class="sheet-title-in">${edit ? 'Edit wine' : 'Add to the cellar'}</div><button class="ico-btn" id="w-close" aria-label="Close">✕</button></div>
+  ${(!edit || _f.want || _f.qty === 0) ? `<div class="edr-rows"><div class="edr-row edr-row-tog"><span class="edr-lbl">Wish list</span><div class="tog-info"><div class="tog-sub" style="margin:0">Haven't bought it yet</div></div><div class="tog ${_f.want ? 'on' : ''}" id="w-want"></div></div></div>` : ''}
   <div class="edr-rows">
     <div class="edr-row"><span class="edr-lbl">Producer</span><input class="edr-inp" id="w-prod" value="${esc(_f.producer)}" placeholder="Winery or brewery" autocomplete="off" autocapitalize="words"></div>
     <div class="edr-row"><span class="edr-lbl">Name</span><input class="edr-inp" id="w-name" value="${esc(_f.name)}" placeholder="Optional" autocomplete="off" autocapitalize="words"></div>
@@ -578,7 +613,7 @@ function wineSheetHTML() {
   </div>
   <div class="edr-rows"><div class="edr-row" style="align-items:flex-start"><span class="edr-lbl" style="padding-top:8px">Label photo</span><div id="w-photo" style="flex:1;min-width:0">${photoBoxHTML()}</div></div></div>
   <div class="edr-rows"><div class="edr-row" style="align-items:flex-start"><span class="edr-lbl" style="padding-top:8px">Notes</span><textarea class="edr-inp edr-ta" id="w-notes" rows="3" placeholder="What did you think?">${esc(_f.notes)}</textarea></div></div>
-  ${edit ? '' : `<div class="edr-divider">First purchase</div>${purchaseRows({ date: todayStr(), store: '', price: '', sale: '', qty: 1 }, 0)}`}
+  ${edit ? '' : `<div id="w-purch" class="${_f.want ? 'hide' : ''}"><div class="edr-divider">First purchase</div>${purchaseRows({ date: todayStr(), store: '', price: '', sale: '', qty: 1 }, 0)}</div>`}
   <div class="err-msg" id="s-err" style="display:none;margin:12px 16px 0"></div>
   <button class="btn-main" id="w-save">${edit ? 'Save changes' : 'Save wine'}</button>
   ${edit ? `<button class="btn-main btn-del" id="w-del">Delete wine</button>` : ''}`;
@@ -608,6 +643,7 @@ function bindWineSheet() {
   on('w-close', 'click', () => closeSheets());
   on('w-save', 'click', saveWine);
   on('w-del', 'click', deleteWine);
+  on('w-want', 'click', () => { _f.want = !_f.want; q('w-want').classList.toggle('on', _f.want); q('w-purch')?.classList.toggle('hide', _f.want); haptic('light'); });
   q('w-keep').addEventListener('click', () => { _f.keeper = !_f.keeper; q('w-keep').classList.toggle('on', _f.keeper); haptic('light'); });
   q('w-stars').addEventListener('click', e => {
     const b = e.target.closest('[data-n]'); if (!b) return;
@@ -671,7 +707,7 @@ function saveWine() {
   readWineForm();
   if (!_f.producer) { showSheetErr('Add the winery or brewery name.'); return; }
   haptic('medium');
-  const fields = { producer: _f.producer, name: _f.name, type: _f.type, region: _f.region, keeper: _f.keeper, rating: _f.rating, notes: _f.notes };
+  const fields = { producer: _f.producer, name: _f.name, type: _f.type, region: _f.region, keeper: _f.keeper, want: _f.want, rating: _f.rating, notes: _f.notes };
 
   if (_f.id) {
     // ── Edit existing wine (qty and purchases are untouched) ──
@@ -694,7 +730,7 @@ function saveWine() {
 
   // ── New wine (+ optional first purchase) ──
   const p = readPurchase();
-  const hasPurchase = p.qty > 0 || p.price > 0;
+  const hasPurchase = !_f.want && (p.qty > 0 || p.price > 0);
   const data = {
     ...fields,
     thumbData: _f.photoState === 'new' ? _f.thumb : null,

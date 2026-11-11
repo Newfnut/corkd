@@ -1,5 +1,5 @@
 // Cork n Count service worker. Bump CACHE on every deploy that changes app.js / styles.css / index.html.
-const CACHE = 'corkd-v1';
+const CACHE = 'corkd-v2';
 const BASE = '/corkd';
 const PRECACHE = [BASE + '/', BASE + '/index.html', BASE + '/styles.css', BASE + '/app.js', BASE + '/icon.png'];
 
