@@ -332,7 +332,6 @@ function refreshCellar() {
   }
 }
 
-
 function rowHTML(w) {
   const qty = w.qtyOnHand || 0;
   const thumb = w.thumbData ? `<img class="wr-thumb" src="${w.thumbData}" alt="">` : `<div class="wr-thumb wr-ph">${typeIcon(w.type)}</div>`;
