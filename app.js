@@ -331,7 +331,7 @@ function refreshCellar() {
     q('c-list').innerHTML = `<div class="wine-list">${list.map(rowHTML).join('')}</div>`;
   }
 }
-}
+
 
 function rowHTML(w) {
   const qty = w.qtyOnHand || 0;
